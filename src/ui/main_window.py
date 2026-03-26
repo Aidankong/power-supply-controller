@@ -33,6 +33,12 @@ class MainWindow(QMainWindow):
         """初始化界面"""
         self.setWindowTitle("数控直流电源控制器")
         self.setMinimumSize(500, 400)
+
+        # 设置窗口图标
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'icon.ico')
+        if os.path.exists(icon_path):
+            from PyQt6.QtGui import QIcon
+            self.setWindowIcon(QIcon(icon_path))
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f5f5f5;

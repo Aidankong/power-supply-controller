@@ -13,7 +13,7 @@ a = Analysis(
     ['src/main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('src/icon.ico', '.')],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -48,10 +48,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # 不显示控制台窗口
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='src/icon.ico',
 )
