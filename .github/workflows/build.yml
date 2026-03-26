@@ -1,10 +1,10 @@
 name: Build Windows EXE
 
 on:
+  workflow_dispatch:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:  # 支持手动触发
+      - "v*"
 
 jobs:
   build-windows:
@@ -17,51 +17,22 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
 
-      - name: Build executable
+      - name: Build executable with PyInstaller spec
         run: |
-          pyinstaller --onefile --windowed --name "PowerSupplyController" src/main.py
+          pyinstaller --clean PowerSupplyController.spec
 
-      - name: Upload artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: PowerSupplyController-Windows
-          path: dist/PowerSupplyController.exe
-          retention-days: 30
-
-  # 可选：同时构建Linux版本
-  build-linux:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Build executable
-        run: |
-          pyinstaller --onefile --windowed --name "PowerSupplyController" src/main.py
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PowerSupplyController-Linux
-          path: dist/PowerSupplyController
+          path: dist/**
+          if-no-files-found: error
           retention-days: 30

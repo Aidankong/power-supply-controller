@@ -1,94 +1,48 @@
-# 数控直流电源控制器
+# 产线电源控制器
 
-基于 PyQt6 开发的数控直流电源上位机软件，支持通过串口控制电源的电压、电流和输出开关。
+面向离线产线电脑部署的 PyQt6 上位机程序，用于通过 `Modbus RTU` 控制程控电源输出开关，并在工程师授权后修改串口、电压、电流参数。
 
-## 功能特性
+## 产品定位
 
-- 串口自动检测和连接
-- 电压设置和读取
-- 电流设置和读取
-- 输出开关控制
-- 实时状态监控
+- 操作员界面只允许查看状态并执行 `打开输出`、`关闭输出`
+- 工程师界面输入密码 `123456` 后才可修改串口、电压、电流
+- 程序启动后自动扫描串口并尝试连接设备
+- 参数修改后会同时写入运行寄存器和掉电保存寄存器
+- 所有关键操作都执行 `写入 + 应答校验 + 回读确认`
 
-## 开发环境
+## 通讯协议
 
-### 依赖安装
+- 协议类型：`Modbus RTU`
+- 默认串口参数：`9600 8N1`
+- 小数位规则：统一按 `00.000`
+- 关键寄存器：
+  - `1000` 实际输出电压
+  - `1001` 实际输出电流
+  - `1007` 设备状态
+  - `2001` 基准电压
+  - `2002` 基准电流
+  - `2016` 输出控制
+  - `2021` 掉电保存电压
+  - `2022` 掉电保存电流
+
+## 开发运行
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
+python3 src/main.py
 ```
 
-### 运行程序
+## 测试
 
 ```bash
-cd src
-python main.py
+python3 -m unittest discover -s tests -v
 ```
 
-## 打包部署
-
-### 本地打包
+## Windows 打包
 
 ```bash
-pip install pyinstaller
+python3 -m pip install pyinstaller
 pyinstaller PowerSupplyController.spec
 ```
 
-可执行文件生成在 `dist/` 目录下。
-
-### GitHub Actions 自动打包
-
-1. 创建版本标签触发自动构建：
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-
-2. 或在 GitHub 仓库页面手动触发 workflow
-
-3. 构建完成后在 Actions → Artifacts 下载 Windows exe
-
-## 通信协议
-
-- 波特率: 9600 bps
-- 数据位: 8 位
-- 校验位: 无
-- 停止位: 1 位
-
-### 帧格式
-
-```
-帧头(2B) + 设备地址(1B) + 命令码(1B) + 数据长度(1B) + 数据(NB) + 校验和(1B)
-```
-
-### 命令码
-
-| 命令码 | 功能 |
-|--------|------|
-| 0x01 | 读取电压 |
-| 0x02 | 设置电压 |
-| 0x03 | 读取电流 |
-| 0x04 | 设置电流 |
-| 0x05 | 输出开关控制 |
-
-## 项目结构
-
-```
-power-supply-controller/
-├── src/
-│   ├── main.py           # 主入口
-│   ├── protocol.py       # 通信协议
-│   ├── serial_port.py    # 串口管理
-│   └── ui/
-│       └── main_window.py # 主界面
-├── .github/
-│   └── workflows/
-│       └── build.yml     # 自动打包配置
-├── requirements.txt      # Python依赖
-├── PowerSupplyController.spec  # PyInstaller配置
-└── README.md
-```
-
-## 许可证
-
-MIT License
+打包产物位于 `dist/PowerSupplyController`。
