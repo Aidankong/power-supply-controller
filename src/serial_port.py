@@ -3,6 +3,7 @@ Serial communication and high-level power supply control.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import List, Optional, Protocol
 
@@ -51,6 +52,13 @@ class CommunicationError(Exception):
     """Raised for transport or protocol failures."""
 
 
+logger = logging.getLogger(__name__)
+
+
+def _format_frame(data: bytes) -> str:
+    return " ".join(f"{byte:02X}" for byte in data)
+
+
 class SerialTransport(Protocol):
     """Transport interface for device communication."""
 
@@ -84,10 +92,13 @@ class SerialManager:
     def __init__(self):
         self.serial: Optional[serial.Serial] = None
         self._port_name = ""
+        self.last_error = ""
 
     def list_ports(self) -> List[str]:
         ports = serial.tools.list_ports.comports()
-        return [port.device for port in ports]
+        devices = [port.device for port in ports]
+        logger.info("Detected serial ports: %s", devices or "none")
+        return devices
 
     @property
     def port_name(self) -> str:
@@ -102,6 +113,7 @@ class SerialManager:
             if self.is_connected:
                 self.disconnect()
 
+            logger.info("Opening serial port %s with %s 8N1", port, baudrate)
             self.serial = serial.Serial(
                 port=port,
                 baudrate=baudrate,
@@ -112,16 +124,21 @@ class SerialManager:
                 write_timeout=self.DEFAULT_TIMEOUT,
             )
             self._port_name = port
+            self.last_error = ""
+            logger.info("Serial port %s opened successfully", port)
             return True
-        except serial.SerialException:
+        except serial.SerialException as exc:
             self.serial = None
             self._port_name = ""
+            self.last_error = f"串口打开失败: {exc}"
+            logger.warning("Failed to open serial port %s: %s", port, exc)
             return False
 
     def disconnect(self):
         if self.serial is not None:
             try:
                 if self.serial.is_open:
+                    logger.info("Closing serial port %s", self._port_name)
                     self.serial.close()
             finally:
                 self.serial = None
@@ -132,10 +149,12 @@ class SerialManager:
             raise CommunicationError("Serial port is not connected")
 
         try:
+            logger.info("Modbus TX [%s]: %s", self._port_name or "unknown", _format_frame(payload))
             self.serial.reset_input_buffer()
             self.serial.write(payload)
             self.serial.flush()
             response = self._read_response(payload[1])
+            logger.info("Modbus RX [%s]: %s", self._port_name or "unknown", _format_frame(response))
             return response
         except serial.SerialException as exc:
             raise CommunicationError(f"Serial request failed: {exc}") from exc
@@ -170,6 +189,14 @@ class SerialManager:
             time.sleep(0.01)
 
         if len(chunks) != expected_length:
+            if chunks:
+                logger.warning(
+                    "Partial Modbus RX [%s]: expected=%s actual=%s data=%s",
+                    self._port_name or "unknown",
+                    expected_length,
+                    len(chunks),
+                    _format_frame(bytes(chunks)),
+                )
             raise CommunicationError("Timed out waiting for device response")
         return bytes(chunks)
 
@@ -181,6 +208,7 @@ class PowerSupplyController:
         self.transport = transport or SerialManager()
         self.device_address = device_address
         self.connected_port = ""
+        self.last_error = ""
 
     @property
     def is_connected(self) -> bool:
@@ -194,25 +222,36 @@ class PowerSupplyController:
         return self.transport.list_ports()
 
     def connect(self, port: str) -> bool:
+        logger.info("Connecting controller to %s", port)
         if not self.transport.connect(port):
+            self.last_error = getattr(self.transport, "last_error", f"无法打开串口 {port}")
             return False
 
         try:
             self._probe_device()
-        except CommunicationError:
+        except CommunicationError as exc:
+            self.last_error = f"串口已打开，但未发现可用 Modbus RTU 设备: {exc}"
+            logger.warning("Device probe failed on %s: %s", port, exc)
             self.transport.disconnect()
             return False
 
         self.connected_port = port
+        self.last_error = ""
+        logger.info("Controller connected to device on %s", port)
         return True
 
     def auto_connect(self) -> Optional[str]:
-        for port in self.list_ports():
+        ports = self.list_ports()
+        for port in ports:
             if self.connect(port):
                 return port
+        if not ports:
+            self.last_error = "未检测到可用串口"
+        logger.info("Auto-connect failed: %s", self.last_error or "no matching device found")
         return None
 
     def disconnect(self):
+        logger.info("Disconnecting controller from %s", self.connected_port or self.port_name or "unknown")
         self.transport.disconnect()
         self.connected_port = ""
 
@@ -292,6 +331,7 @@ class PowerSupplyController:
         )
 
     def set_voltage_current(self, voltage: float, current: float) -> DeviceSnapshot:
+        logger.info("Writing setpoints: voltage=%.3fV current=%.3fA", voltage, current)
         voltage_value = scale_to_register(voltage)
         current_value = scale_to_register(current)
 
@@ -308,6 +348,7 @@ class PowerSupplyController:
         return self.read_snapshot()
 
     def output_on(self) -> DeviceSnapshot:
+        logger.info("Requesting output ON")
         self._request_write_single(Register.OUTPUT_CONTROL, 0xFFFF)
         snapshot = self.read_snapshot()
         if not snapshot.output_on:
@@ -315,6 +356,7 @@ class PowerSupplyController:
         return snapshot
 
     def output_off(self) -> DeviceSnapshot:
+        logger.info("Requesting output OFF")
         self._request_write_single(Register.OUTPUT_CONTROL, 0)
         snapshot = self.read_snapshot()
         if snapshot.output_on:

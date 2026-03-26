@@ -7,11 +7,20 @@ PyInstaller 打包配置
 import sys
 import os
 
+project_root = os.path.abspath(".")
+src_dir = os.path.join(project_root, "src")
+sys.path.insert(0, src_dir)
+
+from version import APP_NAME, APP_VERSION
+
+platform_name = "windows" if sys.platform.startswith("win") else "linux"
+artifact_name = f"{APP_NAME}-v{APP_VERSION}-{platform_name}"
+
 block_cipher = None
 
 a = Analysis(
     ['src/main.py'],
-    pathex=[],
+    pathex=[src_dir],
     binaries=[],
     datas=[('src/icon.ico', '.')],
     hiddenimports=[
@@ -41,7 +50,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PowerSupplyController',
+    name=artifact_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

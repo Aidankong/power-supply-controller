@@ -226,12 +226,21 @@ pyinstaller PowerSupplyController.spec
 
 触发方式：
 
-1. 在 GitHub `Actions` 页面手动执行 `Build Windows EXE`
+1. 在 GitHub `Actions` 页面手动执行 `Build Releases`
 2. 推送版本标签，例如：
 
 ```bash
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.0.1
+git push origin v2.0.1
 ```
 
-构建完成后可在 GitHub Actions 的 artifact 中下载 `PowerSupplyController-Windows`。
+构建完成后可在 GitHub Actions 的 artifact 中下载：
+
+- `PowerSupplyController-Windows-v2.0.1`
+- `PowerSupplyController-Linux-v2.0.1`
+
+当前版本：
+
+- `v2.0.1`
+- Windows 构建产物名：`PowerSupplyController-v2.0.1-windows.exe`
+- Linux 构建产物名：`PowerSupplyController-v2.0.1-linux`

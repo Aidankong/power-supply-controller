@@ -3,6 +3,7 @@ Main UI for the production-line power supply controller.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import List, Optional
@@ -30,12 +31,15 @@ from PyQt6.QtWidgets import (
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app_logging import configure_logging, get_log_path
 from protocol import DeviceSnapshot
 from serial_port import CommunicationError, PowerSupplyController
+from version import APP_VERSION
 
 
 ENGINEER_PASSWORD = "123456"
 REFRESH_INTERVAL_MS = 1000
+logger = logging.getLogger(__name__)
 
 
 class EngineerPasswordDialog(QDialog):
@@ -150,7 +154,9 @@ class DeviceWorker(QObject):
 
     @pyqtSlot()
     def refresh_ports(self):
-        self.ports_ready.emit(self.controller.list_ports())
+        ports = self.controller.list_ports()
+        logger.info("UI refreshed serial ports: %s", ports or "none")
+        self.ports_ready.emit(ports)
 
     @pyqtSlot()
     def auto_connect(self):
@@ -159,18 +165,22 @@ class DeviceWorker(QObject):
             port = self.controller.auto_connect()
             if not port:
                 self.connection_state.emit(False, "")
-                self.status_message.emit("未找到可用电源")
+                message = self.controller.last_error or "未找到可用电源"
+                logger.warning("Auto-connect failed: %s", message)
+                self.status_message.emit(message)
                 return
             snapshot = self.controller.read_snapshot()
             self.connection_state.emit(True, port)
             self.snapshot_ready.emit(snapshot)
             self.status_message.emit(f"已自动连接到 {port}")
+            logger.info("Auto-connect succeeded on %s", port)
 
         try:
             self._run_exclusive(action)
         except CommunicationError as exc:
             self.controller.disconnect()
             self.connection_state.emit(False, "")
+            logger.exception("Auto-connect raised a communication error")
             self.error_message.emit(str(exc))
 
     @pyqtSlot()
@@ -186,6 +196,7 @@ class DeviceWorker(QObject):
         except CommunicationError as exc:
             self.controller.disconnect()
             self.connection_state.emit(False, "")
+            logger.warning("Snapshot refresh failed: %s", exc)
             self.error_message.emit(f"刷新失败: {exc}")
 
     @pyqtSlot(bool)
@@ -198,10 +209,12 @@ class DeviceWorker(QObject):
             text = "输出已打开" if enabled else "输出已关闭"
             self.status_message.emit(text)
             self.operation_finished.emit("output", snapshot)
+            logger.info("Output state changed: %s", "ON" if enabled else "OFF")
 
         try:
             self._run_exclusive(action)
         except CommunicationError as exc:
+            logger.warning("Failed to change output state: %s", exc)
             self.error_message.emit(str(exc))
 
     @pyqtSlot(str, float, float)
@@ -212,20 +225,30 @@ class DeviceWorker(QObject):
             if self.controller.port_name != port or not self.controller.is_connected:
                 self.controller.disconnect()
                 if not self.controller.connect(port):
-                    raise CommunicationError(f"无法连接到 {port}")
+                    message = self.controller.last_error or f"无法连接到 {port}"
+                    raise CommunicationError(message)
                 self.connection_state.emit(True, port)
+                logger.info("Engineer settings connected to %s", port)
 
             snapshot = self.controller.set_voltage_current(voltage, current)
             self.snapshot_ready.emit(snapshot)
             self.status_message.emit("参数已写入并保存到设备")
             self.operation_finished.emit("settings", snapshot)
+            logger.info(
+                "Engineer settings applied on %s: voltage=%.3fV current=%.3fA",
+                port,
+                voltage,
+                current,
+            )
 
         try:
             self._run_exclusive(action)
         except CommunicationError as exc:
+            logger.warning("Applying settings failed on %s: %s", port, exc)
             self.error_message.emit(str(exc))
 
     def shutdown(self):
+        logger.info("Worker shutdown requested")
         self.controller.disconnect()
 
 
@@ -244,6 +267,7 @@ class MainWindow(QMainWindow):
         self.available_ports: List[str] = []
         self.current_snapshot: Optional[DeviceSnapshot] = None
         self.current_port = ""
+        self.log_path = configure_logging()
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(REFRESH_INTERVAL_MS)
@@ -254,6 +278,7 @@ class MainWindow(QMainWindow):
 
         self.request_refresh_ports.emit()
         QTimer.singleShot(0, self.request_auto_connect.emit)
+        logger.info("Main window initialized, log file: %s", self.log_path)
 
     def _init_worker(self):
         self.worker_thread = QThread(self)
@@ -277,7 +302,7 @@ class MainWindow(QMainWindow):
         self.worker_thread.start()
 
     def init_ui(self):
-        self.setWindowTitle("产线电源控制器")
+        self.setWindowTitle(f"产线电源控制器 v{APP_VERSION}")
         self.setMinimumSize(680, 420)
 
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "icon.ico")
@@ -413,10 +438,12 @@ class MainWindow(QMainWindow):
     @pyqtSlot(list)
     def on_ports_ready(self, ports: List[str]):
         self.available_ports = ports
+        logger.info("Available ports updated: %s", ports or "none")
 
     @pyqtSlot(bool, str)
     def on_connection_state(self, connected: bool, port: str):
         self.current_port = port
+        logger.info("Connection state updated: connected=%s port=%s", connected, port or "")
         self.connection_label.setText("已连接" if connected else "未连接")
         self.connection_label.setStyleSheet(
             "color: #2c8a46;" if connected else "color: #7b8794;"
@@ -434,6 +461,15 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def on_snapshot_ready(self, snapshot: DeviceSnapshot):
         self.current_snapshot = snapshot
+        logger.info(
+            "Snapshot updated: port=%s set=%.3f/%.3f actual=%.3f/%.3f output=%s",
+            snapshot.port,
+            snapshot.set_voltage,
+            snapshot.set_current,
+            snapshot.actual_voltage,
+            snapshot.actual_current,
+            snapshot.output_on,
+        )
         self.set_voltage_label.setText(f"{snapshot.set_voltage:.3f} V")
         self.set_current_label.setText(f"{snapshot.set_current:.3f} A")
         self.actual_voltage_label.setText(f"{snapshot.actual_voltage:.3f} V")
@@ -446,16 +482,19 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def show_status_message(self, message: str):
+        logger.info("Status message: %s", message)
         self.statusBar().showMessage(message, 5000)
 
     @pyqtSlot(str)
     def on_error_message(self, message: str):
+        logger.warning("UI error message: %s", message)
         self.statusBar().showMessage(message, 7000)
         QMessageBox.warning(self, "通讯异常", message)
 
     @pyqtSlot(str, object)
     def on_operation_finished(self, operation: str, snapshot: DeviceSnapshot):
         self.current_snapshot = snapshot
+        logger.info("Operation finished: %s", operation)
         if operation == "settings":
             QMessageBox.information(self, "完成", "参数已成功写入设备并保存")
 
@@ -469,11 +508,14 @@ class MainWindow(QMainWindow):
         self.output_state_label.setStyleSheet("")
 
     def open_engineer_settings(self):
+        logger.info("Engineer settings dialog requested")
         password_dialog = EngineerPasswordDialog(self)
         if password_dialog.exec() != QDialog.DialogCode.Accepted:
+            logger.info("Engineer password dialog canceled")
             return
 
         if password_dialog.password() != ENGINEER_PASSWORD:
+            logger.warning("Engineer password verification failed")
             QMessageBox.warning(self, "验证失败", "工程师密码错误")
             return
 
@@ -483,6 +525,7 @@ class MainWindow(QMainWindow):
         if self.current_port and self.current_port not in ports:
             ports.insert(0, self.current_port)
         if not ports:
+            logger.warning("Engineer settings blocked because no serial ports were detected")
             QMessageBox.warning(self, "无串口", "当前未检测到串口，无法打开工程师设置")
             return
 
@@ -495,12 +538,20 @@ class MainWindow(QMainWindow):
         )
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            logger.info("Engineer settings dialog canceled")
             return
 
         port, voltage, current = dialog.values()
+        logger.info(
+            "Engineer settings submitted: port=%s voltage=%.3fV current=%.3fA",
+            port,
+            voltage,
+            current,
+        )
         self.request_apply_settings.emit(port, voltage, current)
 
     def closeEvent(self, event):
+        logger.info("Main window closing")
         self.refresh_timer.stop()
         self.request_shutdown.emit()
         self.worker_thread.quit()
@@ -509,6 +560,8 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    log_path = configure_logging()
+    logger.info("Application startup v%s, log file: %s", APP_VERSION, log_path)
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
